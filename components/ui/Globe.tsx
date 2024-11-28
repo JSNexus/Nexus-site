@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Color, Scene, Fog, PerspectiveCamera, Vector3 } from "three";
 import ThreeGlobe from "three-globe";
 import { useThree, Object3DNode, Canvas, extend } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import countries from "@/data/globe.json";
+
 declare module "@react-three/fiber" {
   interface ThreeElements {
     threeGlobe: Object3DNode<ThreeGlobe, typeof ThreeGlobe>;
@@ -58,8 +59,6 @@ interface WorldProps {
   data: Position[];
 }
 
-let numbersOfRings = [0];
-
 export function Globe({ globeConfig, data }: WorldProps) {
   const [globeData, setGlobeData] = useState<
     | {
@@ -91,29 +90,8 @@ export function Globe({ globeConfig, data }: WorldProps) {
     ...globeConfig,
   };
 
-  useEffect(() => {
-    if (globeRef.current) {
-      _buildData();
-      _buildMaterial();
-    }
-  }, [globeRef.current]);
-
-  const _buildMaterial = () => {
-    if (!globeRef.current) return;
-
-    const globeMaterial = globeRef.current.globeMaterial() as unknown as {
-      color: Color;
-      emissive: Color;
-      emissiveIntensity: number;
-      shininess: number;
-    };
-    globeMaterial.color = new Color(globeConfig.globeColor);
-    globeMaterial.emissive = new Color(globeConfig.emissive);
-    globeMaterial.emissiveIntensity = globeConfig.emissiveIntensity || 0.1;
-    globeMaterial.shininess = globeConfig.shininess || 0.9;
-  };
-
-  const _buildData = () => {
+  // Memoize data building to prevent unnecessary re-renders
+  const _buildData = React.useCallback(() => {
     const arcs = data;
     let points = [];
     for (let i = 0; i < arcs.length; i++) {
@@ -145,24 +123,52 @@ export function Globe({ globeConfig, data }: WorldProps) {
         ) === i
     );
 
-    setGlobeData(filteredPoints);
-  };
+    return filteredPoints;
+  }, [data, defaultProps.pointSize]);
 
+  // Use a separate effect for building data
+  useEffect(() => {
+    const points = _buildData();
+    setGlobeData(points);
+  }, [_buildData]);
+
+  // Memoize material building
+  const _buildMaterial = React.useCallback(() => {
+    if (!globeRef.current) return;
+
+    const globeMaterial = globeRef.current.globeMaterial() as unknown as {
+      color: Color;
+      emissive: Color;
+      emissiveIntensity: number;
+      shininess: number;
+    };
+    globeMaterial.color = new Color(globeConfig.globeColor);
+    globeMaterial.emissive = new Color(globeConfig.emissive);
+    globeMaterial.emissiveIntensity = globeConfig.emissiveIntensity || 0.1;
+    globeMaterial.shininess = globeConfig.shininess || 0.9;
+  }, [globeConfig]);
+
+  // Separate effect for configuring globe when data and ref are ready
   useEffect(() => {
     if (globeRef.current && globeData) {
-      globeRef.current
-        .hexPolygonsData(countries.features)
-        .hexPolygonResolution(3)
-        .hexPolygonMargin(0.7)
-        .showAtmosphere(defaultProps.showAtmosphere)
-        .atmosphereColor(defaultProps.atmosphereColor)
-        .atmosphereAltitude(defaultProps.atmosphereAltitude)
-        .hexPolygonColor((e) => {
-          return defaultProps.polygonColor;
-        });
-      startAnimation();
+      try {
+        _buildMaterial();
+
+        globeRef.current
+          .hexPolygonsData(countries.features)
+          .hexPolygonResolution(3)
+          .hexPolygonMargin(0.7)
+          .showAtmosphere(defaultProps.showAtmosphere)
+          .atmosphereColor(defaultProps.atmosphereColor)
+          .atmosphereAltitude(defaultProps.atmosphereAltitude)
+          .hexPolygonColor(() => defaultProps.polygonColor);
+
+        startAnimation();
+      } catch (error) {
+        console.error("Error configuring globe:", error);
+      }
     }
-  }, [globeData]);
+  }, [globeData, _buildMaterial, defaultProps]);
 
   const startAnimation = () => {
     if (!globeRef.current || !globeData) return;
@@ -202,12 +208,13 @@ export function Globe({ globeConfig, data }: WorldProps) {
       );
   };
 
+  // Simplified rings animation
   useEffect(() => {
     if (!globeRef.current || !globeData) return;
 
     const interval = setInterval(() => {
       if (!globeRef.current || !globeData) return;
-      numbersOfRings = genRandomNumbers(
+      const numbersOfRings = genRandomNumbers(
         0,
         data.length,
         Math.floor((data.length * 4) / 5)
@@ -221,14 +228,12 @@ export function Globe({ globeConfig, data }: WorldProps) {
     return () => {
       clearInterval(interval);
     };
-  }, [globeRef.current, globeData]);
+  }, [globeRef, globeData, data]);
 
-  return (
-    <>
-      <threeGlobe ref={globeRef} />
-    </>
-  );
+  return <threeGlobe ref={globeRef} />;
 }
+
+// Rest of the code remains the same...
 
 export function WebGLRendererConfig() {
   const { gl, size } = useThree();
